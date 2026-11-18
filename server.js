@@ -182,7 +182,180 @@ app.get("/api/me", authenticate, (req, res) => {
 
   res.json({ user, inventory });
 });
+// Ensure player exists
+function ensureUser(user) {
+  db.prepare(`
+    INSERT OR IGNORE INTO users (id, username)
+    VALUES (?, ?)
+  `).run(user.id, user.username);
+}
 
+// Open card pack
+app.post("/api/open-pack", authenticate, (req, res) => {
+  ensureUser(req.user);
+
+  const packs = {
+    basic: { price: 100, count: 1 },
+    premium: { price: 250, count: 3 },
+    legendary: { price: 500, count: 5 }
+  };
+
+  const pack = packs[req.body.packType];
+
+  if (!pack) {
+    return res.status(400).json({ error: "Unknown pack" });
+  }
+
+  const openPack = db.transaction(() => {
+    const user = db.prepare(
+      "SELECT coins FROM users WHERE id = ?"
+    ).get(req.user.id);
+
+    if (user.coins < pack.price) {
+      throw new Error("NOT_ENOUGH_COINS");
+    }
+
+    db.prepare(
+      "UPDATE users SET coins = coins - ? WHERE id = ?"
+    ).run(pack.price, req.user.id);
+
+    const availableCards = db.prepare(
+      "SELECT * FROM cards"
+    ).all();
+
+    const obtained = [];
+
+    for (let i = 0; i < pack.count; i++) {
+      const roll = Math.random() * 100;
+
+      let rarity = "common";
+      if (roll >= 98) rarity = "legendary";
+      else if (roll >= 85) rarity = "epic";
+      else if (roll >= 55) rarity = "rare";
+
+      let pool = availableCards.filter(
+        card => card.rarity === rarity
+      );
+
+      if (!pool.length) pool = availableCards;
+
+      const card = pool[
+        Math.floor(Math.random() * pool.length)
+      ];
+
+      db.prepare(`
+        INSERT INTO inventory (user_id, card_id, quantity)
+        VALUES (?, ?, 1)
+        ON CONFLICT(user_id, card_id)
+        DO UPDATE SET quantity = quantity + 1
+      `).run(req.user.id, card.id);
+
+      obtained.push(card);
+    }
+
+    const balance = db.prepare(
+      "SELECT coins FROM users WHERE id = ?"
+    ).get(req.user.id).coins;
+
+    return { obtained, balance };
+  });
+
+  try {
+    res.json(openPack());
+  } catch (error) {
+    if (error.message === "NOT_ENOUGH_COINS") {
+      return res.status(400).json({
+        error: "Not enough coins"
+      });
+    }
+
+    console.error(error);
+    res.status(500).json({ error: "Pack opening failed" });
+  }
+});
+
+// PvE battle
+app.post("/api/battle", authenticate, (req, res) => {
+  ensureUser(req.user);
+
+  const cardId = req.body.cardId;
+
+  if (typeof cardId !== "string" || cardId.length > 50) {
+    return res.status(400).json({ error: "Invalid card" });
+  }
+
+  const ownedCard = db.prepare(`
+    SELECT cards.*
+    FROM inventory
+    JOIN cards ON cards.id = inventory.card_id
+    WHERE inventory.user_id = ?
+      AND inventory.card_id = ?
+      AND inventory.quantity > 0
+  `).get(req.user.id, cardId);
+
+  if (!ownedCard) {
+    return res.status(400).json({
+      error: "You do not own this card"
+    });
+  }
+
+  const enemies = db.prepare(
+    "SELECT * FROM cards WHERE id != ?"
+  ).all(cardId);
+
+  const enemy = enemies[
+    Math.floor(Math.random() * enemies.length)
+  ];
+
+  const playerPower =
+    ownedCard.attack +
+    ownedCard.defense * 0.35 +
+    ownedCard.hp * 0.2 +
+    Math.random() * 30;
+
+  const enemyPower =
+    enemy.attack +
+    enemy.defense * 0.35 +
+    enemy.hp * 0.2 +
+    Math.random() * 30;
+
+  let result = "loss";
+  let reward = 5;
+
+  if (playerPower > enemyPower) {
+    result = "win";
+    reward = 25;
+  } else if (playerPower === enemyPower) {
+    result = "draw";
+    reward = 10;
+  }
+
+  const saveBattle = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO battles (user_id, result, reward)
+      VALUES (?, ?, ?)
+    `).run(req.user.id, result, reward);
+
+    db.prepare(`
+      UPDATE users SET coins = coins + ?
+      WHERE id = ?
+    `).run(reward, req.user.id);
+  });
+
+  saveBattle();
+
+  const balance = db.prepare(
+    "SELECT coins FROM users WHERE id = ?"
+  ).get(req.user.id).coins;
+
+  res.json({
+    result,
+    reward,
+    balance,
+    player: ownedCard,
+    enemy
+  });
+});
 // Leaderboard
 app.get("/api/leaderboard", (req, res) => {
   const players = db.prepare(`
