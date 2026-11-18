@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TMNT CARD WARS</title>
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 18px;
+  background: #101510;
+  color: #fff;
+  font-family: Arial, sans-serif;
+}
+
+header {
+  text-align: center;
+  padding: 15px;
+  border: 2px solid #a6ef39;
+  border-radius: 12px;
+  background: #1d2b19;
+}
+
+h1 {
+  color: #b6ff43;
+  font-size: 27px;
+  margin: 5px;
+  text-shadow: 2px 2px #000;
+}
+
+.subtitle {
+  color: #ddd;
+  font-size: 12px;
+}
+
+.balance {
+  margin: 15px 0;
+  padding: 15px;
+  background: #26351f;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 21px;
+  color: #ffe45c;
+}
+
+.tabs {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 15px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.tabs button {
+  flex: 1;
+  background: #293329;
+  color: white;
+}
+
+.tabs button.active {
+  background: #a6ef39;
+  color: #14200e;
+}
+
+.section {
+  display: none;
+}
+
+.section.active {
+  display: block;
+}
+
+.pack {
+  padding: 17px;
+  margin-bottom: 12px;
+  background: #202b20;
+  border: 1px solid #536d45;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.pack .emoji {
+  font-size: 45px;
+}
+
+.pack h3 {
+  margin: 8px;
+  color: #b6ff43;
+}
+
+.action {
+  background: #a6ef39;
+  color: #17200f;
+  width: 100%;
+  font-size: 15px;
+  margin-top: 8px;
+}
+
+.card {
+  display: inline-block;
+  vertical-align: top;
+  width: 47%;
+  margin: 1%;
+  padding: 12px;
+  min-height: 160px;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #354d30, #172219);
+  border: 2px solid #a6ef39;
+  text-align: center;
+}
+
+.card h3 {
+  color: #c5ff74;
+}
+
+.stats {
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.result {
+  background: #26351f;
+  padding: 15px;
+  border-radius: 10px;
+  margin-top: 12px;
+  text-align: center;
+}
+
+.muted {
+  color: #aaa;
+  text-align: center;
+  font-size: 13px;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>🐢 TMNT CARD WARS</h1>
+  <div class="subtitle">COLLECT • FIGHT • BECOME A LEGEND</div>
+</header>
+
+<div class="balance">
+  🪙 <span id="coins">---</span> монет
+</div>
+
+<div class="tabs">
+  <button class="active" onclick="showTab('packs',this)">Наборы</button>
+  <button onclick="showTab('collection',this)">Коллекция</button>
+  <button onclick="showTab('battle',this)">Арена</button>
+</div>
+
+<section id="packs" class="section active">
+
+  <div class="pack">
+    <div class="emoji">📦</div>
+    <h3>Обычный набор</h3>
+    <p>1 случайная карточка</p>
+    <button class="action" onclick="openPack('basic')">
+      Открыть — 100 🪙
+    </button>
+  </div>
+
+  <div class="pack">
+    <div class="emoji">🎁</div>
+    <h3>Премиум набор</h3>
+    <p>3 случайные карточки</p>
+    <button class="action" onclick="openPack('premium')">
+      Открыть — 250 🪙
+    </button>
+  </div>
+
+  <div class="pack">
+    <div class="emoji">💎</div>
+    <h3>Легендарный набор</h3>
+    <p>5 случайных карточек</p>
+    <button class="action" onclick="openPack('legendary')">
+      Открыть — 500 🪙
+    </button>
+  </div>
+
+</section>
+
+<section id="collection" class="section">
+  <h2>📚 Моя коллекция</h2>
+  <div id="cards" class="muted">Загрузка...</div>
+</section>
+
+<section id="battle" class="section">
+  <h2>⚔️ Арена</h2>
+  <p class="muted">Выбери карточку для сражения.</p>
+  <div id="battleCards"></div>
+  <div id="battleResult"></div>
+</section>
+
+<script>
+const tg = window.Telegram?.WebApp;
+
+if (tg) {
+  tg.ready();
+  tg.expand();
+}
+
+let inventory = [];
+
+function headers() {
+  return {
+    "Content-Type": "application/json",
+    "X-Telegram-Init-Data": tg?.initData || ""
+  };
+}
+
+function showTab(id, button) {
+  document.querySelectorAll(".section")
+    .forEach(x => x.classList.remove("active"));
+
+  document.querySelectorAll(".tabs button")
+    .forEach(x => x.classList.remove("active"));
+
+  document.getElementById(id).classList.add("active");
+  button.classList.add("active");
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...headers(),
+      ...(options.headers || {})
+    }
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Ошибка сервера");
+  }
+
+  return data;
+}
+
+async function loadProfile() {
+  try {
+    const data = await request("/api/me");
+
+    document.getElementById("coins").textContent =
+      data.user.coins;
+
+    inventory = data.inventory;
+
+    renderInventory();
+
+  } catch (error) {
+    document.getElementById("coins").textContent = "—";
+    console.error(error);
+  }
+}
+
+function renderInventory() {
+  const container = document.getElementById("cards");
+  const battle = document.getElementById("battleCards");
+
+  if (!inventory.length) {
+    container.innerHTML =
+      '<p class="muted">Коллекция пока пуста. Открой первый набор!</p>';
+
+    battle.innerHTML =
+      '<p class="muted">Сначала собери карточки.</p>';
+
+    return;
+  }
+
+  container.innerHTML = "";
+  battle.innerHTML = "";
+
+  inventory.forEach(card => {
+    const html = `
+      <div class="card">
+        <h3>${card.name}</h3>
+        <div class="stats">
+          Редкость: ${card.rarity}<br>
+          ⚔️ Атака: ${card.attack}<br>
+          🛡 Защита: ${card.defense}<br>
+          ❤️ HP: ${card.hp}<br>
+          Количество: ${card.quantity}
+        </div>
+      </div>
+    `;
+
+    container.innerHTML += html;
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "pack";
+    wrapper.innerHTML = `
+      <h3>${card.name}</h3>
+      <p>Атака: ${card.attack} | Защита: ${card.defense}</p>
+      <button class="action">Сразиться</button>
+    `;
+
+    wrapper.querySelector("button").onclick = () =>
+      battleWith(card.id);
+
+    battle.appendChild(wrapper);
+  });
+}
+
+async function openPack(type) {
+  try {
+    const data = await request("/api/open-pack", {
+      method: "POST",
+      body: JSON.stringify({ packType: type })
+    });
+
+    document.getElementById("coins").textContent =
+      data.balance;
+
+    const names = data.obtained
+      .map(card => card.name)
+      .join(", ");
+
+    alert("🎉 Получены карточки:\n" + names);
+
+    await loadProfile();
+
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function battleWith(cardId) {
+  try {
+    const data = await request("/api/battle", {
+      method: "POST",
+      body: JSON.stringify({ cardId })
+    });
+
+    document.getElementById("battleResult").innerHTML = `
+      <div class="result">
+        <h3>${data.result === "win" ? "🏆 ПОБЕДА!" :
+          data.result === "draw" ? "🤝 НИЧЬЯ" : "💀 ПОРАЖЕНИЕ"}</h3>
+        <p>Противник: ${data.enemy.name}</p>
+        <p>Награда: ${data.reward} 🪙</p>
+      </div>
+    `;
+
+    document.getElementById("coins").textContent =
+      data.balance;
+
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+loadProfile();
+</script>
+
+</body>
+</html>
